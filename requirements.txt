@@ -1,0 +1,16 @@
+brotli
+google-genai
+jupyterlab
+jupyter_contrib_nbextensions
+keras
+matplotlib
+numpy
+nose2
+pandas
+pip
+scipy
+seaborn
+tensorflow
+tensorflow-metal
+torch
+torchvision
