@@ -1,0 +1,116 @@
+# Extract relevant info for the first 10 rows
+cols = [
+    'cases.submitter_id',
+    'diagnoses.ajcc_pathologic_stage',
+    'pathology_report',
+    'diagnoses.residual_disease',
+    'demographic.age_at_index'
+]
+first_10 = df[cols].head(10)
+
+# Function to parse report for grade and invasion
+def parse_report(report):
+    report = str(report).lower()
+    grade = 0 # default
+    if 'poorly differentiated' in report or 'grade 3' in report or 'g3' in report:
+        grade = -0.08
+    elif 'well differentiated' in report or 'grade 1' in report or 'g1' in report:
+        grade = 0.05
+
+    invasion = 0
+    if 'vascular invasion: present' in report or 'lymphovascular invasion: present' in report or 'invasion: present' in report:
+        invasion = -0.10
+
+    return grade, invasion
+
+# Map stage
+stage_map = {
+    'Stage IA': 0.91, 'Stage IB': 0.84, 'Stage IIA': 0.73, 'Stage IIB': 0.66,
+    'Stage IIIA': 0.46, 'Stage IIIB': 0.28, 'Stage IV': 0.16,
+    'Stage I': 0.87, 'Stage II': 0.70, 'Stage III': 0.35
+}
+
+results = []
+for idx, row in first_10.iterrows():
+    base = stage_map.get(row['diagnoses.ajcc_pathologic_stage'], 0.50)
+    grade_adj, inv_adj = parse_report(row['pathology_report'])
+    res_adj = -0.20 if row['diagnoses.residual_disease'] in ['R1', 'R2'] else 0
+    age_adj = -0.05 if row['demographic.age_at_index'] > 75 else 0
+
+    prob = max(0.05, min(0.95, base + grade_adj + inv_adj + res_adj + age_adj))
+    results.append(f"{row['cases.submitter_id']}: {prob:.2f}")
+
+TCGA-44-6777: 0.48
+TCGA-56-7579: 0.41
+TCGA-34-7107: 0.66
+TCGA-78-8648: 0.76
+TCGA-39-5040: 0.84
+TCGA-43-6647: 0.91
+TCGA-44-3398: 0.33
+TCGA-34-5240: 0.84
+TCGA-38-4627: 0.84
+TCGA-55-6642: 0.91
+
+
+```
+
+```python
+# Extract relevant info for the first 20 rows
+first_20 = df[cols].head(20)
+
+results_20 = []
+for idx, row in first_20.iterrows():
+    base = stage_map.get(row['diagnoses.ajcc_pathologic_stage'], 0.50)
+    grade_adj, inv_adj = parse_report(row['pathology_report'])
+    res_adj = -0.20 if row['diagnoses.residual_disease'] in ['R1', 'R2'] else 0
+    age_adj = -0.05 if row['demographic.age_at_index'] > 75 else 0
+
+    prob = max(0.05, min(0.95, base + grade_adj + inv_adj + res_adj + age_adj))
+    results_20.append(f"{row['cases.submitter_id']}: {prob:.2f}")
+
+print("\n".join(results_20))
+
+
+```
+
+```text
+TCGA-44-6777: 0.48
+TCGA-56-7579: 0.41
+TCGA-34-7107: 0.66
+TCGA-78-8648: 0.76
+TCGA-39-5040: 0.84
+TCGA-43-6647: 0.91
+TCGA-44-3398: 0.33
+TCGA-34-5240: 0.84
+TCGA-38-4627: 0.84
+TCGA-55-6642: 0.91
+TCGA-22-5492: 0.58
+TCGA-55-7816: 0.83
+TCGA-22-4607: 0.05
+TCGA-77-7142: 0.91
+TCGA-49-4510: 0.79
+TCGA-55-7227: 0.74
+TCGA-MP-A4TF: 0.78
+TCGA-77-A5GA: 0.58
+TCGA-85-A4CN: 0.84
+TCGA-77-6844: 0.83
+TCGA-44-6777: 0.48
+TCGA-56-7579: 0.41
+TCGA-34-7107: 0.66
+TCGA-78-8648: 0.76
+TCGA-39-5040: 0.84
+TCGA-43-6647: 0.91
+TCGA-44-3398: 0.33
+TCGA-34-5240: 0.84
+TCGA-38-4627: 0.84
+TCGA-55-6642: 0.91
+TCGA-22-5492: 0.58
+TCGA-55-7816: 0.83
+TCGA-22-4607: 0.05
+TCGA-77-7142: 0.91
+TCGA-49-4510: 0.79
+TCGA-55-7227: 0.74
+TCGA-MP-A4TF: 0.78
+TCGA-77-A5GA: 0.58
+TCGA-85-A4CN: 0.84
+TCGA-77-6844: 0.83
