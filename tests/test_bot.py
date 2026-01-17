@@ -41,7 +41,7 @@ class TestBot(unittest.TestCase):
         self.assertEqual(bot.path, cn.MERGED_DATA_PTH)
         self.assertEqual(bot.model, "gemini-2.5-flash")
         self.assertEqual(
-            bot.data_df.columns.tolist(),
+            bot.selected_data_df.columns.tolist(),
             [
                 "cases.submitter_id",
                 "diagnoses.ajcc_pathologic_stage",

@@ -9,6 +9,7 @@ nose2
 pandas
 pip
 scipy
+scikit-learn
 seaborn
 tensorflow
 tensorflow-metal

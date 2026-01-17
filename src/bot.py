@@ -7,7 +7,8 @@ from google import genai # type: ignore
 import os
 import pandas as pd  # type: ignore
 from scipy.stats import chi2_contingency  # type: ignore
-from typing import List, Tuple
+from sklearn.metrics import roc_auc_score # type: ignore
+from typing import List, Tuple, cast
 
 ONESHOT_PROMPT = """
 Instruction: You are a clinical oncologist with expertise in cancer prognosis.
@@ -41,12 +42,12 @@ class Bot(object):
         self.key_path = key_path
         self.path = path
         self.model = model
-        self.data_df= pd.read_csv(path)
-        self.columns = self.data_df.columns.tolist()
+        self.full_data_df= pd.read_csv(path)
+        self.columns = self.full_data_df.columns.tolist()
         if not set(selected_columns).issubset(set(self.columns)):
             raise ValueError(f"Selected columns not in {path}")
         self.selected_columns = selected_columns
-        self.data_df = self.data_df[selected_columns]
+        self.selected_data_df = self.full_data_df[selected_columns]
         self._initializeEnvironment()
         self.oneshot_results: list = []
         self.one_shot_idx = 0 # index to keep track of one shot analyses
@@ -69,7 +70,7 @@ class Bot(object):
         chat = self.makeChat()
         prompt_data = ""
         for column in self.selected_columns:
-            prompt_data += f"{column}: {self.data_df.loc[self.one_shot_idx][column]}\n"
+            prompt_data += f"{column}: {self.selected_data_df.loc[self.one_shot_idx][column]}\n"
         prompt = ONESHOT_PROMPT % prompt_data
         response = chat.send_message(prompt)
         if response is None:
@@ -77,3 +78,10 @@ class Bot(object):
         extracted_response = float(response.text) # type: ignore
         self.oneshot_results.append(extracted_response)
         self.one_shot_idx += 1
+
+    def calculateAUC(self)->float:
+        '''Calculate AUC for one shot results.
+        '''
+        true_binary_labels = self.full_data_df['OS'].tolist()[0:len(self.oneshot_results)] 
+        auc = roc_auc_score(true_binary_labels, self.oneshot_results)
+        return cast(float, auc)
