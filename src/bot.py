@@ -30,8 +30,12 @@ class Bot(object):
             model="gemini-2.5-flash",
             key_path="/Users/jlheller/google_api_key_paid.txt",
             experiment_filename: Optional[str]=None,
+            is_initialize_experiment_file: bool=False,
             is_mock: bool=False) -> None:
         """
+        Collects survival data. If the experiment_filename is provided,
+        saves results to that file and resumes from previous results.
+
         Args:
             diagnostic_pth (str, optional): _description_. Defaults to cn.MERGED_DATA_PTH.
                 CSV file
@@ -42,6 +46,7 @@ class Bot(object):
                 "/Users/jlheller/google_api_key_paid.txt".
             experiment_filename (Optional[str], optional): Name of CSV file for experiment results
                 Defaults to None.
+            is_initialize (bool, optional): If True, initializes the experiment file.
             is_mock (bool, optional): If True, uses mock responses for testing.
 
         """
@@ -50,6 +55,10 @@ class Bot(object):
             experiment_filename = str(np.random.randint(1000000, 9999999)) + ".csv"
         self.experiment_filename = experiment_filename
         self.experiment_path = os.path.join(cn.EXPERIMENT_DIR, self.experiment_filename)
+        if os.path.exists(self.experiment_path) and is_initialize_experiment_file:
+            os.remove(self.experiment_path)
+        df = pd.read_csv(self.experiment_path) if os.path.exists(self.experiment_path) else pd.DataFrame()
+        self.oneshot_idx = len(df) # index to keep track of one shot analyses
         self.key_path = key_path
         self.path = diagnostic_pth
         self.model = model
@@ -61,7 +70,6 @@ class Bot(object):
         self.selected_columns = selected_columns
         self.selected_data_df = self.full_data_df[selected_columns]
         self._initializeEnvironment()
-        self.oneshot_idx = 0 # index to keep track of one shot analyses
         self.client = genai.Client()
 
     def getExperimentFilename(self)->str:
@@ -111,18 +119,19 @@ class Bot(object):
             response = chat.send_message(prompt)
             if response is None:
                 raise ValueError("No response from Gemini")
-            result_dct[cn.COL_PREDICTED] = float(response.text) # type: ignore
+            try:
+                result_dct[cn.COL_PREDICTED] = float(response.text) # type: ignore
+            except Exception as e:
+                import pdb; pdb.set_trace()
         #
         result_dct[cn.COL_ACTUAL] = self.full_data_df.loc[data_idx, 'OS']
         return result_dct
 
-    def executeMultipleOneshot(self, num_shot:int, is_initialize:bool = False)->pd.DataFrame:
+    def executeMultipleOneshot(self, num_shot:int)->pd.DataFrame:
         """Executes multiple one-shot analyses in sequence,
             saving results to the experiment file.
         Args:
             num_shot (int): _description_
-            is_initialize (bool, optional): If True, resets the index to 0.
-                Defaults to False.
 
         Returns:
             pd.DataFrame:
@@ -131,9 +140,6 @@ class Bot(object):
                 actual: true label (float)
         """
         # Initializaitons
-        if is_initialize:
-            self.oneshot_idx = 0
-            os.remove(self.experiment_path) if os.path.exists(self.experiment_path) else None
         # Execute
         result_dcts: list = []
         for _ in range(num_shot):

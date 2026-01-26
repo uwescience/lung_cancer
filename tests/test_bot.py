@@ -24,6 +24,7 @@ class TestBot(unittest.TestCase):
     def setUp(self):
         self.bot = Bot(diagnostic_pth=TEST_DATA_PTH,
             experiment_filename=TEST_EXPERIMENT_PATH,
+            is_initialize_experiment_file=True,
             is_mock=True)
 
     def testConstructor(self):
@@ -113,6 +114,13 @@ class TestBot(unittest.TestCase):
         self.assertEqual(self.bot.oneshot_idx, self.bot.data_len)
         saved = pd.read_csv(TEST_EXPERIMENT_PATH)
         self.assertEqual(len(saved), num_shots + 3 + remaining)
+
+        # A new bot with is_initialize=False should resume from existing file
+        bot2 = Bot(diagnostic_pth=TEST_DATA_PTH,
+            experiment_filename=TEST_EXPERIMENT_PATH,
+            is_mock=True,
+            is_initialize_experiment_file=False)
+        self.assertEqual(bot2.oneshot_idx, self.bot.data_len)
 
 
 if __name__ == '__main__':
