@@ -131,7 +131,7 @@ class Bot(object):
         """Executes multiple one-shot analyses in sequence,
             saving results to the experiment file.
         Args:
-            num_shot (int): _description_
+            num_shot (int): Number of one-shot analyses to execute.
 
         Returns:
             pd.DataFrame:
@@ -149,16 +149,18 @@ class Bot(object):
             result_dcts.append(result_dct)
             self.oneshot_idx += 1
         # Convert to a dict of lists
-        result_dct = {key: [d[key] for d in result_dcts] for key in result_dcts[0]}
         # Save results
-        result_df = pd.DataFrame(result_dct)
-        if (len(result_df) > 0):
+        if (len(result_dcts) > 0):
+            result_dct = {key: [d[key] for d in result_dcts] for key in result_dcts[0]}
+            result_df = pd.DataFrame(result_dct)
             if os.path.exists(self.experiment_path):
                 previous_results_df = pd.read_csv(self.experiment_path)
             else:
                 previous_results_df = pd.DataFrame()
             full_result_df = pd.concat([previous_results_df, result_df], ignore_index=True)
             full_result_df.to_csv(self.experiment_path, index=False)
+        else:
+            result_df = pd.DataFrame()
         return result_df
 
     def calculateAUC(self)->float:

@@ -11,7 +11,7 @@ import os
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
-EXPERIMENT_FILENAME = os.path.join(cn.EXPERIMENT_DIR, "oneshot_experiment1_results.csv")
+EXPERIMENT_FILENAME = os.path.join(cn.EXPERIMENT_DIR, "oneshot_experiment2_results.csv")
 REPORT_INTERVAL = 5
 
 
