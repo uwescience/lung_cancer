@@ -4,10 +4,13 @@ import src.constants as cn
 
 from google import genai # type: ignore
 import os
+import matplotlib.pyplot as plt  # type: ignore
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from sklearn.metrics import roc_auc_score # type: ignore
-from typing import List, cast, Optional
+from typing import List, cast, Optional, Dict
+from sklearn.metrics import roc_curve, auc  # type: ignore
+from sklearn.metrics import RocCurveDisplay  # type: ignore
 
 ONESHOT_PROMPT = """
 Instruction: You are a clinical oncologist with expertise in cancer prognosis.
@@ -71,6 +74,7 @@ class Bot(object):
         self.selected_data_df = self.full_data_df[selected_columns]
         self._initializeEnvironment()
         self.client = genai.Client()
+        self.uploaded_files: list = []
 
     def getExperimentFilename(self)->str:
         '''Get the experiment filename.
@@ -162,11 +166,197 @@ class Bot(object):
         else:
             result_df = pd.DataFrame()
         return result_df
+    
+    @staticmethod
+    def calculateAUC(experiment_df:pd.DataFrame)->float:
+        """Calculate AUC for one shot results.
 
-    def calculateAUC(self)->float:
-        '''Calculate AUC for one shot results.
-        '''
-        full_result_df = pd.read_csv(self.experiment_path)
-        true_binary_labels = full_result_df[cn.COL_ACTUAL].tolist()[0:len(full_result_df)] 
-        auc = roc_auc_score(true_binary_labels, full_result_df[cn.COL_PREDICTED].tolist())
+        Args:
+            result_df (pd.DataFrame): DataFrame with results.  
+        Returns:
+            float: AUC value.
+
+        """
+        true_binary_labels = experiment_df[cn.COL_ACTUAL].tolist()[0:len(experiment_df)] 
+        auc = roc_auc_score(true_binary_labels, experiment_df[cn.COL_PREDICTED].tolist())
         return cast(float, auc)
+    
+    @staticmethod
+    def plotROC(experiment_df:pd.DataFrame)->None:
+        """Plot ROC curve for one shot results.
+
+        Args:
+            result_df (pd.DataFrame): DataFrame with results.  
+        """
+        from sklearn.metrics import RocCurveDisplay # type: ignore
+        import matplotlib.pyplot as plt  # type: ignore
+
+        true_binary_labels = experiment_df[cn.COL_ACTUAL].tolist()[0:len(experiment_df)] 
+        RocCurveDisplay.from_predictions(
+            true_binary_labels,
+            experiment_df[cn.COL_PREDICTED].tolist()
+        )
+        plt.show()
+
+    #def plotROCs(cls, directory_path: str, figsize=(8,6)) -> None:
+    @classmethod
+    def plotROCs(cls, result_dir_name: str,
+            experiment_dir_pth: Optional[str]=None, figsize=(8,6),
+            is_plot:bool = True)-> None:
+        """Plot ROC curves for multiple experiment files on the same plot.
+
+        Args:
+            directory_path (str): Path to directory containing experiment CSV files.
+        """
+        result_dct = cls.getExperimentResults(result_dir_name,
+            experiment_dir_pth=experiment_dir_pth)
+        keys = list(result_dct.keys())
+        # Construct the median value
+        all_df = pd.concat([result_dct[f] for f in result_dct], ignore_index=True)
+        dfg = all_df.groupby(cn.COL_SUBMITTER_ID)
+        medians = dfg[cn.COL_PREDICTED].median().tolist()
+        median_df = pd.DataFrame(medians, columns=[cn.COL_PREDICTED])
+        median_df[cn.COL_SUBMITTER_ID] = dfg[cn.COL_SUBMITTER_ID].first().tolist()
+        median_df.set_index(cn.COL_SUBMITTER_ID, inplace=True)
+        median_df[cn.COL_ACTUAL] = dfg[cn.COL_ACTUAL].first().tolist()
+        result_dct["Median Prediction"] = median_df
+        # Plot ROC curve for each file
+        for filename, df in result_dct.items():
+            # Extract predicted and actual columns
+            if cn.COL_PREDICTED not in df.columns or cn.COL_ACTUAL not in df.columns:
+                print(f"Warning: Skipping {filename} - missing 'predicted' or 'actual' columns")
+                continue
+            y_true = df[cn.COL_ACTUAL].tolist()
+            y_scores = df[cn.COL_PREDICTED].tolist()
+            # Calculate ROC curve
+            fpr, tpr, _ = roc_curve(y_true, y_scores)
+            roc_auc = auc(fpr, tpr)
+            
+            # Plot
+            plt.plot(fpr, tpr, lw=2, label=f'{filename} (AUC = {roc_auc:.2f})')
+
+        # Plot diagonal line
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random Classifier')
+        
+        # Labels and formatting
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curves for Multiple Experiments')
+        plt.legend(loc="lower right")
+        plt.grid(alpha=0.3)
+        if is_plot:
+            plt.show()
+
+    @classmethod
+    def calculateAUCs(cls, experiment_dfs: Optional[List[pd.DataFrame]] = None,
+            result_dir_name:Optional[str]=None,
+            experiment_dir_pth: Optional[str]=None)-> Dict[str, pd.Series]:
+        """Calculate AUC for one shot results. At least one of experiment_dfs or dir_name
+        must be provided.
+
+        Args:
+            result_dfs (Optional[List[pd.DataFrame]], optional): List of DataFrames with results.
+                If empty, loads from experiment file. Defaults to None.
+            result_dir_name (Optional[str], optional): Directory name for experiment file
+                in experiment directory. Defaults to None.
+            experiment_dir_pth (Optional[str], optional): Path to experiment directory.
+
+        Returns:
+            Dict[str, pd.Series]: 
+                key: filename
+                value: Series - COL_FILENAME, COL_AUC, COL_PREDICTED, COL_ACTUAL
+
+        """
+        # Build the dataframe dictionary
+        experiment_dct = {}
+        if experiment_dir_pth is None:
+            experiment_dir_pth = cn.EXPERIMENT_DIR
+        if experiment_dfs is None or len(experiment_dfs) == 0:
+            if result_dir_name is None:
+                raise ValueError("Either experiment_dfs or result_dir_name must be provided")   
+            experiment_dct = cls.getExperimentResults(result_dir_name,
+                experiment_dir_pth=experiment_dir_pth)
+        else:
+            for idx, df in enumerate(experiment_dfs):
+                experiment_dct[f"{idx}"] = df
+        # Calculate AUCs
+        result_dct: Dict[str, pd.Series] = {}
+        for filename, df in experiment_dct.items():
+            ser = pd.Series()
+            ser[cn.COL_FILENAME] = filename
+            ser[cn.COL_PREDICTED] = df[cn.COL_PREDICTED].values
+            ser[cn.COL_ACTUAL] = df[cn.COL_ACTUAL].values
+            ser[cn.COL_AUC] = Bot.calculateAUC(df)
+            result_dct[filename] = ser
+        return result_dct
+    
+    @classmethod
+    def getExperimentResults(cls, result_dir_name: str,
+            experiment_dir_pth: Optional[str]=None)-> Dict[str, pd.DataFrame]:
+        """Gets the experiment results from a directory of results.
+
+        Args:
+            result_dir_name (Optional[str], optional): Directory name for experiment file
+                in experiment directory. Defaults to None.
+            experiment_dir_pth (Optional[str], optional): Path to experiment directory.
+
+        Returns:
+            Dict[str, pd.DataFrame]: 
+                key: filename
+                value: DataFrame with results
+
+        """
+        result_dct: Dict[str, pd.DataFrame] = {}
+        if experiment_dir_pth is None:
+            experiment_dir_pth = cn.EXPERIMENT_DIR
+        # Build the dataframe dictionary
+        dir_path = os.path.join(experiment_dir_pth, result_dir_name) if result_dir_name is not None else None
+        if dir_path is None:
+            raise ValueError("dir_name must be provided if result_df is empty")
+        experiment_files = os.listdir(dir_path)
+        experiment_paths = [os.path.join(dir_path, f) for f in experiment_files
+                if f.endswith(".csv")]
+        for idx, path in enumerate(experiment_paths):
+            if not os.path.isfile(path):
+                raise RuntimeError(f"File not found: {path}")
+            result_dct[experiment_files[idx]] = pd.read_csv(path)
+        return result_dct
+    
+    @classmethod
+    def plotPredictionRange(cls, result_dir_name: str,
+            experiment_dir_pth: Optional[str]=None,
+            is_plot: bool = True)-> None:
+        """Plots a histogram of the ranges of predictions within the directory.
+
+        Args:
+            result_dir_name (str): directory with replications
+            experiment_dir_pth (Optional[str], optional): Path to experiment directory. Defaults to None.
+        """
+        result_dct = cls.getExperimentResults(result_dir_name,
+            experiment_dir_pth=experiment_dir_pth)
+        df = pd.concat([result_dct[f] for f in result_dct], ignore_index=True)
+        stds = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].std().tolist()
+        maxs = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].max().tolist()
+        mins = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].min().tolist()
+        ranges = [maxs[i] - mins[i] for i in range(len(maxs))]
+        #plt.hist(stds, bins=30, alpha=0.7, density=True)
+        #plt.hist(ranges, bins=30, alpha=0.7, culmulative=True, density=True)
+        ranges.sort()
+        x_arr = np.array(ranges)
+        y_arr = np.array(range(len(ranges))) / len(ranges)
+        plt.plot(x_arr, y_arr)
+        plt.xlabel("Range of Predictions")
+        plt.ylabel("Fraction of Samples")
+        plt.title("Distribution of Range of Survival Predictions for the Same Patient")
+        if is_plot:
+            plt.show()
+
+    def uploadFile(self, file_path:str)->None:
+        """Uploads a file to Gemini and returns the file ID.
+
+        Args:
+            file_path (str): Path to the file to upload.    
+        """
+        self.uploaded_files.append(self.client.files.upload(file=file_path))

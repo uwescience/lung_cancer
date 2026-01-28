@@ -12,3 +12,7 @@ MERGED_DATA_PTH = os.path.join(DATA_DIR, "merged_data", "processed_dataset.csv")
 # Column names
 COL_PREDICTED = "predicted"
 COL_ACTUAL = "actual"
+COL_FILENAME = "filename"
+COL_AUC = "AUC"
+COL_PATHOLOGY_REPORT = "pathology_report"
+COL_SUBMITTER_ID = "cases.submitter_id"

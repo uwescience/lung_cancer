@@ -11,6 +11,9 @@ IGNORE_TEST = False
 IS_PLOT = False
 # Construct dummy test data
 TEST_DATA_PTH = os.path.join(cn.TEST_DIR, "test_data.csv")
+TEST_EXPERIMENT_RESULT_PATH = os.path.join(cn.TEST_DIR, "experiment_result_dir",
+        "oneshot_experiment1_results.csv")
+TEST_EXPERIMENT_DIR_PTH = os.path.join(cn.TEST_DIR, "experiment_result_dir")
 TEST_EXPERIMENT_PATH = os.path.join(cn.TEST_DIR, "test_experiment.csv")
 if not os.path.exists(TEST_DATA_PTH):
     MERGED_DATA_DF = pd.read_csv(cn.MERGED_DATA_PTH, sep=',')
@@ -121,6 +124,50 @@ class TestBot(unittest.TestCase):
             is_mock=True,
             is_initialize_experiment_file=False)
         self.assertEqual(bot2.oneshot_idx, self.bot.data_len)
+
+    def testCalculateAUC(self):
+        # Mock data for testing
+        if IGNORE_TEST:
+            return
+        mock_experiment_df = pd.read_csv(TEST_EXPERIMENT_RESULT_PATH)
+        calculated_auc = self.bot.calculateAUC(mock_experiment_df)
+
+    def testGetExperimentResults(self):
+        if IGNORE_TEST:
+            return
+        result_dct = Bot.getExperimentResults(
+            result_dir_name=TEST_EXPERIMENT_DIR_PTH,
+            experiment_dir_pth=cn.TEST_DIR
+        )
+        self.assertIsInstance(result_dct, dict)
+        self.assertIn("oneshot_experiment1_results.csv", result_dct)
+        df = result_dct["oneshot_experiment1_results.csv"]
+        self.assertIsInstance(df, pd.DataFrame)
+        self.assertIn(cn.COL_PREDICTED, df.columns)
+        self.assertIn(cn.COL_ACTUAL, df.columns)
+    
+    def testPlotPredictionRange(self):
+        if IGNORE_TEST:
+            return
+        Bot.plotPredictionRange(
+            result_dir_name=TEST_EXPERIMENT_DIR_PTH,
+            experiment_dir_pth=cn.TEST_DIR, is_plot=IS_PLOT
+        )
+
+    def testPlotROCs(self):
+        #if IGNORE_TEST:
+        #    return
+        # Test with valid directory containing multiple CSV files
+        Bot.plotROCs(TEST_EXPERIMENT_DIR_PTH, is_plot=IS_PLOT)
+
+    def testPlotROCsInvalidDirectory(self):
+        if IGNORE_TEST:
+            return
+        # Test with non-existent directory
+        invalid_dir = "/nonexistent/directory"
+        with self.assertRaises(ValueError) as context:
+            Bot.plotROCs(invalid_dir)
+        self.assertIn("Directory not found", str(context.exception))
 
 
 if __name__ == '__main__':
