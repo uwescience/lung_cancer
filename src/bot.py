@@ -1,5 +1,7 @@
 '''A bot that does one shot analysis.'''
+from http import client
 import os
+import time
 import src.constants as cn
 
 from google import genai # type: ignore
@@ -8,10 +10,12 @@ import matplotlib.pyplot as plt  # type: ignore
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from sklearn.metrics import roc_auc_score # type: ignore
-from typing import List, cast, Optional, Dict
+from typing import List, cast, Optional, Dict, Any
 from sklearn.metrics import roc_curve, auc  # type: ignore
 from sklearn.metrics import RocCurveDisplay  # type: ignore
+from io import StringIO
 
+LOCAL_CONTEXT_FILE = os.path.join(cn.DATA_DIR, "local_context.csv")
 ONESHOT_PROMPT = """
 Instruction: You are a clinical oncologist with expertise in cancer prognosis.
 
@@ -23,6 +27,21 @@ beyond 2 years from the date of diagnosis.
 Output format (no explanation):
 indicate the probability of a 2 year survival. Only return a probability value between 0 and 1
 """
+ONESHOT_FILE_PROMPT = f"""
+Instruction: You are a clinical oncologist with expertise in cancer prognosis.
+
+Task: Using the file {LOCAL_CONTEXT_FILE}, predict whether the patient survived
+beyond 2 years from the date of diagnosis. Each row in the file is a different patient.
+So, you are processing a batch of requests. Provide a response for each row in the file.
+Do not skip any rows.
+The columns are as follows:
+  *cases.submitter_id: Unique patient identifier
+  *pathology_report: Text of the pathology report
+
+Output format (no explanation):
+indicate the probability of a 2 year survival.
+Only return a probability value between 0 and 1
+"""
 
 
 class Bot(object):
@@ -33,6 +52,7 @@ class Bot(object):
             model="gemini-2.5-flash",
             key_path="/Users/jlheller/google_api_key_paid.txt",
             experiment_filename: Optional[str]=None,
+            experiment_dir:str = cn.EXPERIMENT_DIR,
             is_initialize_experiment_file: bool=False,
             is_mock: bool=False) -> None:
         """
@@ -49,6 +69,7 @@ class Bot(object):
                 "/Users/jlheller/google_api_key_paid.txt".
             experiment_filename (Optional[str], optional): Name of CSV file for experiment results
                 Defaults to None.
+            experiment_dir (str, optional): Directory for experiment results.
             is_initialize (bool, optional): If True, initializes the experiment file.
             is_mock (bool, optional): If True, uses mock responses for testing.
 
@@ -57,10 +78,10 @@ class Bot(object):
         if experiment_filename is None:
             experiment_filename = str(np.random.randint(1000000, 9999999)) + ".csv"
         self.experiment_filename = experiment_filename
-        self.experiment_path = os.path.join(cn.EXPERIMENT_DIR, self.experiment_filename)
-        if os.path.exists(self.experiment_path) and is_initialize_experiment_file:
-            os.remove(self.experiment_path)
-        df = pd.read_csv(self.experiment_path) if os.path.exists(self.experiment_path) else pd.DataFrame()
+        self.experiment_pth = os.path.join(experiment_dir, self.experiment_filename)
+        if os.path.exists(self.experiment_pth) and is_initialize_experiment_file:
+            os.remove(self.experiment_pth)
+        df = pd.read_csv(self.experiment_pth) if os.path.exists(self.experiment_pth) else pd.DataFrame()
         self.oneshot_idx = len(df) # index to keep track of one shot analyses
         self.key_path = key_path
         self.path = diagnostic_pth
@@ -74,7 +95,7 @@ class Bot(object):
         self.selected_data_df = self.full_data_df[selected_columns]
         self._initializeEnvironment()
         self.client = genai.Client()
-        self.uploaded_files: list = []
+        self.uploaded_file_dct: dict = {}
 
     def getExperimentFilename(self)->str:
         '''Get the experiment filename.
@@ -157,29 +178,15 @@ class Bot(object):
         if (len(result_dcts) > 0):
             result_dct = {key: [d[key] for d in result_dcts] for key in result_dcts[0]}
             result_df = pd.DataFrame(result_dct)
-            if os.path.exists(self.experiment_path):
-                previous_results_df = pd.read_csv(self.experiment_path)
+            if os.path.exists(self.experiment_pth):
+                previous_results_df = pd.read_csv(self.experiment_pth)
             else:
                 previous_results_df = pd.DataFrame()
             full_result_df = pd.concat([previous_results_df, result_df], ignore_index=True)
-            full_result_df.to_csv(self.experiment_path, index=False)
+            full_result_df.to_csv(self.experiment_pth, index=False)
         else:
             result_df = pd.DataFrame()
         return result_df
-    
-    @staticmethod
-    def calculateAUC(experiment_df:pd.DataFrame)->float:
-        """Calculate AUC for one shot results.
-
-        Args:
-            result_df (pd.DataFrame): DataFrame with results.  
-        Returns:
-            float: AUC value.
-
-        """
-        true_binary_labels = experiment_df[cn.COL_ACTUAL].tolist()[0:len(experiment_df)] 
-        auc = roc_auc_score(true_binary_labels, experiment_df[cn.COL_PREDICTED].tolist())
-        return cast(float, auc)
     
     @staticmethod
     def plotROC(experiment_df:pd.DataFrame)->None:
@@ -250,49 +257,6 @@ class Bot(object):
             plt.show()
 
     @classmethod
-    def calculateAUCs(cls, experiment_dfs: Optional[List[pd.DataFrame]] = None,
-            result_dir_name:Optional[str]=None,
-            experiment_dir_pth: Optional[str]=None)-> Dict[str, pd.Series]:
-        """Calculate AUC for one shot results. At least one of experiment_dfs or dir_name
-        must be provided.
-
-        Args:
-            result_dfs (Optional[List[pd.DataFrame]], optional): List of DataFrames with results.
-                If empty, loads from experiment file. Defaults to None.
-            result_dir_name (Optional[str], optional): Directory name for experiment file
-                in experiment directory. Defaults to None.
-            experiment_dir_pth (Optional[str], optional): Path to experiment directory.
-
-        Returns:
-            Dict[str, pd.Series]: 
-                key: filename
-                value: Series - COL_FILENAME, COL_AUC, COL_PREDICTED, COL_ACTUAL
-
-        """
-        # Build the dataframe dictionary
-        experiment_dct = {}
-        if experiment_dir_pth is None:
-            experiment_dir_pth = cn.EXPERIMENT_DIR
-        if experiment_dfs is None or len(experiment_dfs) == 0:
-            if result_dir_name is None:
-                raise ValueError("Either experiment_dfs or result_dir_name must be provided")   
-            experiment_dct = cls.getExperimentResults(result_dir_name,
-                experiment_dir_pth=experiment_dir_pth)
-        else:
-            for idx, df in enumerate(experiment_dfs):
-                experiment_dct[f"{idx}"] = df
-        # Calculate AUCs
-        result_dct: Dict[str, pd.Series] = {}
-        for filename, df in experiment_dct.items():
-            ser = pd.Series()
-            ser[cn.COL_FILENAME] = filename
-            ser[cn.COL_PREDICTED] = df[cn.COL_PREDICTED].values
-            ser[cn.COL_ACTUAL] = df[cn.COL_ACTUAL].values
-            ser[cn.COL_AUC] = Bot.calculateAUC(df)
-            result_dct[filename] = ser
-        return result_dct
-    
-    @classmethod
     def getExperimentResults(cls, result_dir_name: str,
             experiment_dir_pth: Optional[str]=None)-> Dict[str, pd.DataFrame]:
         """Gets the experiment results from a directory of results.
@@ -353,10 +317,94 @@ class Bot(object):
         if is_plot:
             plt.show()
 
-    def uploadFile(self, file_path:str)->None:
-        """Uploads a file to Gemini and returns the file ID.
+    def _executeGenerateContent(self, 
+            prompt=ONESHOT_FILE_PROMPT,
+            dataframe:pd.DataFrame=pd.DataFrame()
+            )-> tuple[str, Any]:
+        """Uploads the file and obtains the response.
 
         Args:
-            file_path (str): Path to the file to upload.    
+            prompt (_type_, optional): _description_. Defaults to ONESHOT_FILE_PROMPT.
+            dataframe (Optional[pd.DataFrame], optional): DataFrame to use for the prompt
+
+        Returns:
+            tuple[str, Optional[genai.client.models.Response]]: _description_
         """
-        self.uploaded_files.append(self.client.files.upload(file=file_path))
+        # Upload the file
+        dataframe.to_csv(LOCAL_CONTEXT_FILE, index=False)
+        uploaded_file = self.client.files.upload(file=LOCAL_CONTEXT_FILE)
+        # Wait for file processing
+        while uploaded_file.state == "PROCESSING":
+            time.sleep(1)
+            uploaded_file = self.client.files.get(name=uploaded_file.name) # type: ignore
+        # Get the response
+        response = None
+        if not self.is_mock:
+            response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[prompt, uploaded_file])
+            response_text = response.text
+            # Clean the response text
+        else:
+            submitter_ids = self.full_data_df[cn.COL_SUBMITTER_ID].tolist()
+            with open(LOCAL_CONTEXT_FILE, "r") as f:
+                file_content = f.readlines()
+            length = len(file_content) - 1 # exclude header
+            response_text = "\n".join(
+                    [f"{submitter_ids[n]},{str(np.random.uniform(0, 1))}"
+                    for n in range(length)])
+        # Add the header if missing
+        response_text = str(response_text).strip()
+        if not cn.COL_SUBMITTER_ID in response_text:
+            response_text = f"{cn.COL_SUBMITTER_ID},{cn.COL_PREDICTED}\n" + response_text
+        #
+        return response_text, response  # type: ignore
+
+    def executeMultipleOneshotInFile(self, batch_size:int=50)->pd.DataFrame:
+        '''Uploads the data for multiple one-shot analyses in batches. Then submits the prompt.
+
+        Args:
+            batch_size (int): Number of rows to process in each batch. Defaults to 50.
+
+        Returns:
+            pd.DataFrame:
+                <column>: column in prompt (str)
+                predicted: returned from LLM (float)
+                actual: true label (float)
+        '''
+        all_response_df = pd.DataFrame()
+        unprocessed_patients = self.selected_data_df[cn.COL_SUBMITTER_ID].tolist()
+        prev_patient_count = len(unprocessed_patients)
+        # Process until all patients are done
+        result_df = pd.DataFrame()
+        while len(unprocessed_patients) > 0:
+            df = self.selected_data_df[
+                self.selected_data_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
+            response_text, response = self._executeGenerateContent(dataframe=df)
+            if len(df) == 0:
+                import pdb; pdb.set_trace()
+            # Create the response dataframe
+            response_df = pd.read_csv(StringIO(response_text))
+            response_df = response_df[
+                    response_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
+            columns = response_df.columns.tolist()
+            columns[1] = cn.COL_PREDICTED
+            response_df.columns = columns
+            # Eliminate redunant responses
+            response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
+            # Eliminate processed patients
+            unprocessed_patients = [p for p in unprocessed_patients
+                if p not in response_df[cn.COL_SUBMITTER_ID].tolist()]
+            all_response_df = pd.concat([all_response_df, response_df], ignore_index=True)
+            # Check for progress
+            if len(unprocessed_patients) == prev_patient_count:
+                raise RuntimeError("No progress made in processing patients")
+            prev_patient_count = len(unprocessed_patients)
+            result_df = pd.merge(all_response_df, 
+                                self.full_data_df[[cn.COL_SUBMITTER_ID, 'OS']], 
+                                on=cn.COL_SUBMITTER_ID,
+                                how='left')
+            result_df.rename(columns={'OS': cn.COL_ACTUAL}, inplace=True)
+            result_df.to_csv(self.experiment_pth, index=False)
+        # Join with the original data to get actual labels
+        return result_df
