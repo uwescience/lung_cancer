@@ -384,14 +384,21 @@ class Bot(object):
             if len(df) == 0:
                 import pdb; pdb.set_trace()
             # Create the response dataframe
-            response_df = pd.read_csv(StringIO(response_text))
+            try:
+                response_df = pd.read_csv(StringIO(response_text))
+            except Exception as e:
+                print(f"Quitting because error reading response text: {e}")
+                break
             response_df = response_df[
                     response_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
             columns = response_df.columns.tolist()
             columns[1] = cn.COL_PREDICTED
             response_df.columns = columns
             # Eliminate redunant responses
-            response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
+            try:
+                response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
+            except Exception as e:
+                import pdb; pdb.set_trace()
             # Eliminate processed patients
             unprocessed_patients = [p for p in unprocessed_patients
                 if p not in response_df[cn.COL_SUBMITTER_ID].tolist()]
