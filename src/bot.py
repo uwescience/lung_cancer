@@ -1,4 +1,12 @@
-'''A bot that does one shot analysis.'''
+'''A bot that generates and analyzes survival predictions.'''
+
+"""
+Notes
+    1. Prompt files are in prompts/zeroshot_single and prompts/zeroshot_batch directories. Each file contains a getPrompt function that returns the
+        prompt pattern for the single zero-shot and batch zero-shot analyses, respectively.
+"""
+
+
 from http import client
 import os
 import time
@@ -16,36 +24,10 @@ from sklearn.metrics import RocCurveDisplay  # type: ignore
 from io import StringIO
 
 LOCAL_CONTEXT_FILE = os.path.join(cn.DATA_DIR, "local_context.csv")
-ONESHOT_PROMPT = """
-Instruction: You are a clinical oncologist with expertise in cancer prognosis.
-
-Task: Based on the following pathology report, predict whether the patient survived
-beyond 2 years from the date of diagnosis.
-
-%s
-
-Output format (no explanation):
-indicate the probability of a 2 year survival. Only return a probability value between 0 and 1
-"""
-ONESHOT_FILE_PROMPT = f"""
-Instruction: You are a clinical oncologist with expertise in cancer prognosis.
-
-Task: Using the file {LOCAL_CONTEXT_FILE}, predict whether the patient survived
-beyond 2 years from the date of diagnosis. Each row in the file is a different patient.
-So, you are processing a batch of requests. Provide a response for each row in the file.
-Do not skip any rows.
-The columns are as follows:
-  *cases.submitter_id: Unique patient identifier
-  *pathology_report: Text of the pathology report
-
-Output format (no explanation):
-indicate the probability of a 2 year survival.
-Only return a probability value between 0 and 1
-"""
 
 
 class Bot(object):
-    '''A bot that does one collects survival data'''
+    '''A bot that collects survival data'''
 
     def __init__(self, diagnostic_pth:str=cn.MERGED_DATA_PTH,
             selected_columns:List[str]=["cases.submitter_id", "pathology_report"],
@@ -54,6 +36,7 @@ class Bot(object):
             experiment_filename: Optional[str]=None,
             experiment_dir:str = cn.EXPERIMENT_DIR,
             is_initialize_experiment_file: bool=False,
+            is_randomized: bool=False,
             is_mock: bool=False) -> None:
         """
         Collects survival data. If the experiment_filename is provided,
@@ -71,10 +54,12 @@ class Bot(object):
                 Defaults to None.
             experiment_dir (str, optional): Directory for experiment results.
             is_initialize (bool, optional): If True, initializes the experiment file.
+            is_randomized (bool, optional): If True, randomizes the order of predictor columns
             is_mock (bool, optional): If True, uses mock responses for testing.
 
         """
         self.is_mock = is_mock
+        self.is_randomized = is_randomized
         if experiment_filename is None:
             experiment_filename = str(np.random.randint(1000000, 9999999)) + ".csv"
         self.experiment_filename = experiment_filename
@@ -82,7 +67,7 @@ class Bot(object):
         if os.path.exists(self.experiment_pth) and is_initialize_experiment_file:
             os.remove(self.experiment_pth)
         df = pd.read_csv(self.experiment_pth) if os.path.exists(self.experiment_pth) else pd.DataFrame()
-        self.oneshot_idx = len(df) # index to keep track of one shot analyses
+        self.zeroshot_idx = len(df) # index to keep track of zero shot analyses
         self.key_path = key_path
         self.path = diagnostic_pth
         self.model = model
@@ -93,6 +78,9 @@ class Bot(object):
             raise ValueError(f"Selected columns not in {diagnostic_pth}")
         self.selected_columns = selected_columns
         self.selected_data_df = self.full_data_df[selected_columns]
+        if self.is_randomized:
+            for column in self.selected_columns:
+                self.selected_data_df[column] = np.random.permutation(self.selected_data_df[column])
         self._initializeEnvironment()
         self.client = genai.Client()
         self.uploaded_file_dct: dict = {}
@@ -114,11 +102,14 @@ class Bot(object):
         chat = self.client.chats.create(model=self.model)
         return chat
     
-    def executeOneshot(self, data_idx:int=0)->dict:
-        '''Builds and submits the prompt for one shot analysis. Uses a new chat.
+    def executeSingleZeroshot(self, data_idx:int=0, prompt_file:str="prompt1.py")->dict:
+        '''Builds and submits the prompt for zero shot analysis. Uses a new chat.
         Args:
             data_idx (int): Index of the data row to analyze.
                 Defaults to 0.
+            prompt_file (str, optional): Name of file in the prompt/zeroshot_batch directory
+                containing the prompt to use for the single zero-shot analysis.
+                Defaults to "prompt1.py".
         Returns:
             dict:
                 <column>: column in prompt (str)
@@ -135,7 +126,7 @@ class Bot(object):
         for column in self.selected_columns:
             result_dct[column] = self.selected_data_df.loc[data_idx][column]
             prompt_data += f"{column}: {result_dct[column]}\n"
-        prompt = ONESHOT_PROMPT % prompt_data
+        prompt = self._getPrompt(prompt_file=prompt_file, directory="zeroshot_single") % prompt_data
         # Get the response
         if self.is_mock:
             # For testing, return a random prediction
@@ -152,11 +143,11 @@ class Bot(object):
         result_dct[cn.COL_ACTUAL] = self.full_data_df.loc[data_idx, 'OS']
         return result_dct
 
-    def executeMultipleOneshot(self, num_shot:int)->pd.DataFrame:
-        """Executes multiple one-shot analyses in sequence,
+    def executeMultipleSingleZeroshot(self, num_shot:int, prompt_file:str="prompt1.py")->pd.DataFrame:
+        """Executes multiple zero-shot analyses in sequence,
             saving results to the experiment file.
         Args:
-            num_shot (int): Number of one-shot analyses to execute.
+            num_shot (int): Number of zero-shot analyses to execute.
 
         Returns:
             pd.DataFrame:
@@ -168,11 +159,12 @@ class Bot(object):
         # Execute
         result_dcts: list = []
         for _ in range(num_shot):
-            if self.oneshot_idx >= self.data_len:
+            if self.zeroshot_idx >= self.data_len:
                 break
-            result_dct = self.executeOneshot(self.oneshot_idx)
+            result_dct = self.executeSingleZeroshot(self.zeroshot_idx,
+                    prompt_file=prompt_file)
             result_dcts.append(result_dct)
-            self.oneshot_idx += 1
+            self.zeroshot_idx += 1
         # Convert to a dict of lists
         # Save results
         if (len(result_dcts) > 0):
@@ -190,7 +182,7 @@ class Bot(object):
     
     @staticmethod
     def plotROC(experiment_df:pd.DataFrame)->None:
-        """Plot ROC curve for one shot results.
+        """Plot ROC curve for zero shot results.
 
         Args:
             result_df (pd.DataFrame): DataFrame with results.  
@@ -207,28 +199,39 @@ class Bot(object):
 
     #def plotROCs(cls, directory_path: str, figsize=(8,6)) -> None:
     @classmethod
-    def plotROCs(cls, result_dir_name: str,
-            experiment_dir_pth: Optional[str]=None, figsize=(8,6),
+    def plotROCs(cls,
+            result_dir_names: List[str],
+            experiment_dir_pth: Optional[str]=None,
+            figsize=(8,6),
+            legends:Optional[List[str]]=None,
             is_plot:bool = True)-> None:
         """Plot ROC curves for multiple experiment files on the same plot.
 
         Args:
-            directory_path (str): Path to directory containing experiment CSV files.
+            result_dir_names (List[str]): List of directory names for experiment files containing CSV files.
+            experiment_dir_pth (Optional[str], optional): Path to experiment directory.
+            figsize (tuple, optional): Figure size. Defaults to (8,6).
+            legends (Optional[List[str]], optional): List of legends for each experiment file. Defaults to None.
+            is_plot (bool, optional): If True, shows the plot. Defaults to True.
         """
-        result_dct = cls.getExperimentResults(result_dir_name,
-            experiment_dir_pth=experiment_dir_pth)
-        keys = list(result_dct.keys())
+        all_result_dct: Dict[str, pd.DataFrame] = {}
+        for result_dir_name in result_dir_names:
+            dct = cls.getExperimentResults(result_dir_name,
+                experiment_dir_pth=experiment_dir_pth)
+            all_result_dct.update(dct)
+        keys = list(all_result_dct.keys())
         # Construct the median value
-        all_df = pd.concat([result_dct[f] for f in result_dct], ignore_index=True)
+        all_df = pd.concat([all_result_dct[f] for f in all_result_dct], ignore_index=True)
         dfg = all_df.groupby(cn.COL_SUBMITTER_ID)
         medians = dfg[cn.COL_PREDICTED].median().tolist()
         median_df = pd.DataFrame(medians, columns=[cn.COL_PREDICTED])
         median_df[cn.COL_SUBMITTER_ID] = dfg[cn.COL_SUBMITTER_ID].first().tolist()
         median_df.set_index(cn.COL_SUBMITTER_ID, inplace=True)
         median_df[cn.COL_ACTUAL] = dfg[cn.COL_ACTUAL].first().tolist()
-        result_dct["Median Prediction"] = median_df
+        all_result_dct["Median Prediction"] = median_df
         # Plot ROC curve for each file
-        for filename, df in result_dct.items():
+        plt.figure(figsize=figsize)
+        for idx, (filename, df) in enumerate(all_result_dct.items()):
             # Extract predicted and actual columns
             if cn.COL_PREDICTED not in df.columns or cn.COL_ACTUAL not in df.columns:
                 print(f"Warning: Skipping {filename} - missing 'predicted' or 'actual' columns")
@@ -240,7 +243,9 @@ class Bot(object):
             roc_auc = auc(fpr, tpr)
             
             # Plot
-            plt.plot(fpr, tpr, lw=2, label=f'{filename} (AUC = {roc_auc:.2f})')
+            label = legends[idx] if legends is not None and idx < len(legends) else filename
+            plt.plot(fpr, tpr, lw=2,
+                label=f'{label} (AUC = {roc_auc:.2f})')
 
         # Plot diagonal line
         plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random Classifier')
@@ -318,7 +323,7 @@ class Bot(object):
             plt.show()
 
     def _executeGenerateContent(self, 
-            prompt=ONESHOT_FILE_PROMPT,
+            prompt,
             dataframe:pd.DataFrame=pd.DataFrame()
             )-> tuple[str, Any]:
         """Uploads the file and obtains the response.
@@ -359,12 +364,26 @@ class Bot(object):
             response_text = f"{cn.COL_SUBMITTER_ID},{cn.COL_PREDICTED}\n" + response_text
         #
         return response_text, response  # type: ignore
-
-    def executeMultipleOneshotInFile(self, batch_size:int=50)->pd.DataFrame:
-        '''Uploads the data for multiple one-shot analyses in batches. Then submits the prompt.
+    
+    def _getPrompt(self, prompt_file:str="prompt1.py", directory:str="zeroshot_batch")->str:
+        """Gets the batch prompt from the specified file.
 
         Args:
-            batch_size (int): Number of rows to process in each batch. Defaults to 50.
+            prompt_file (str, optional): Name of file in the prompt/zeroshot_batch directory containing the prompt to use for the batch zero-shot analysis. Defaults to "prompt1.py".
+            directory (str, optional): Name of directory in the prompts folder containing the prompt file. Defaults to "zeroshot_batch".
+
+        Returns:
+            str: The batch prompt.
+        """
+        prompt_module = __import__(f"prompts.{directory}.{prompt_file[:-3]}", fromlist=['getPrompt'])
+        prompt = prompt_module.getPrompt()
+        return prompt
+
+    def executeBatchZeroshot(self, prompt_file:str="prompt1.py")->pd.DataFrame:
+        '''Uploads the data for multiple zero-shot analyses in batches. Then submits the prompt.
+
+        Args:
+            prompt_file (str):  Name of file in the prompt/zeroshot_batch directory containing the prompt to use for the batch zero-shot analysis.
 
         Returns:
             pd.DataFrame:
@@ -372,17 +391,19 @@ class Bot(object):
                 predicted: returned from LLM (float)
                 actual: true label (float)
         '''
+        MAX_RETRIES = 10 
         all_response_df = pd.DataFrame()
         unprocessed_patients = self.selected_data_df[cn.COL_SUBMITTER_ID].tolist()
         prev_patient_count = len(unprocessed_patients)
         # Process until all patients are done
         result_df = pd.DataFrame()
-        while len(unprocessed_patients) > 0:
+        for _ in range(MAX_RETRIES):
+            if len(unprocessed_patients) == 0:
+                break
             df = self.selected_data_df[
                 self.selected_data_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
-            response_text, response = self._executeGenerateContent(dataframe=df)
-            if len(df) == 0:
-                import pdb; pdb.set_trace()
+            prompt = self._getPrompt(prompt_file=prompt_file)
+            response_text, _ = self._executeGenerateContent(prompt=prompt, dataframe=df)
             # Create the response dataframe
             try:
                 response_df = pd.read_csv(StringIO(response_text))
@@ -395,10 +416,7 @@ class Bot(object):
             columns[1] = cn.COL_PREDICTED
             response_df.columns = columns
             # Eliminate redunant responses
-            try:
-                response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
-            except Exception as e:
-                import pdb; pdb.set_trace()
+            response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
             # Eliminate processed patients
             unprocessed_patients = [p for p in unprocessed_patients
                 if p not in response_df[cn.COL_SUBMITTER_ID].tolist()]
@@ -413,5 +431,7 @@ class Bot(object):
                                 how='left')
             result_df.rename(columns={'OS': cn.COL_ACTUAL}, inplace=True)
             result_df.to_csv(self.experiment_pth, index=False)
+        if len(unprocessed_patients) > 0:
+            print(f"Warning: Unprocessed patients remaining after {MAX_RETRIES} retries: {unprocessed_patients}")
         # Join with the original data to get actual labels
         return result_df

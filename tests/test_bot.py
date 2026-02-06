@@ -70,17 +70,17 @@ class TestBot(unittest.TestCase):
             is_mock=False)
         if True:
             num_test = 2
-            results = [bot.executeOneshot(data_idx=n) for n in range(num_test)]
+            results = [bot.executeSingleZeroshot(data_idx=n) for n in range(num_test)]
             result_dct = {key: [d[key] for d in results] for key in results[0]}
             trues = [isinstance(x, float) for x in result_dct[cn.COL_PREDICTED]]
             self.assertTrue(all(trues))
         #
         num_test = 1000
         with self.assertRaises(IndexError):
-            _ = [self.bot.executeOneshot(data_idx=n) for n in range(num_test)]
+            _ = [self.bot.executeSingleZeroshot(data_idx=n) for n in range(num_test)]
         #
         num_test = 600
-        results = [self.bot.executeOneshot(data_idx=n) for n in range(num_test)]
+        results = [self.bot.executeSingleZeroshot(data_idx=n) for n in range(num_test)]
         result_dct = {key: [d[key] for d in results] for key in results[0]}
         trues = [isinstance(x, float) for x in result_dct[cn.COL_PREDICTED]]
         self.assertTrue(all(trues))
@@ -95,13 +95,13 @@ class TestBot(unittest.TestCase):
         if os.path.exists(result_pth):
             os.remove(result_pth)
         num_shots = 5
-        results_df = self.bot.executeMultipleOneshot(num_shot=num_shots)
+        results_df = self.bot.executeMultipleSingleZeroshot(num_shot=num_shots)
         self.assertEqual(len(results_df), num_shots)
         self.assertIn(cn.COL_PREDICTED, results_df.columns)
         self.assertIn(cn.COL_ACTUAL, results_df.columns)
         self.assertTrue(results_df[cn.COL_PREDICTED].apply(lambda x: isinstance(float(x), float)).all())
         self.assertTrue(results_df[cn.COL_ACTUAL].apply(lambda x: isinstance(float(x), float)).all())
-        self.assertEqual(self.bot.oneshot_idx, num_shots)
+        self.assertEqual(self.bot.zeroshot_idx, num_shots)
         self.assertTrue(os.path.exists(TEST_EXPERIMENT_MULTIPLE_DIR))
         saved = pd.read_csv(result_pth)
         self.assertEqual(len(saved), num_shots)
@@ -109,17 +109,17 @@ class TestBot(unittest.TestCase):
         self.assertIn(cn.COL_ACTUAL, saved.columns)
 
         # Subsequent call should continue from the next index and append results
-        additional_df = self.bot.executeMultipleOneshot(num_shot=3)
+        additional_df = self.bot.executeMultipleSingleZeroshot(num_shot=3)
         self.assertEqual(len(additional_df), 3)
-        self.assertEqual(self.bot.oneshot_idx, num_shots + 3)
+        self.assertEqual(self.bot.zeroshot_idx, num_shots + 3)
         saved = pd.read_csv(TEST_EXPERIMENT_PTH)
         self.assertEqual(len(saved), num_shots + 3)
 
         # Large request should stop at dataset boundary
-        remaining = self.bot.data_len - self.bot.oneshot_idx
-        overflow_df = self.bot.executeMultipleOneshot(num_shot=remaining + 10)
+        remaining = self.bot.data_len - self.bot.zeroshot_idx
+        overflow_df = self.bot.executeMultipleSingleZeroshot(num_shot=remaining + 10)
         self.assertEqual(len(overflow_df), remaining)
-        self.assertEqual(self.bot.oneshot_idx, self.bot.data_len)
+        self.assertEqual(self.bot.zeroshot_idx, self.bot.data_len)
         saved = pd.read_csv(TEST_EXPERIMENT_PTH)
         self.assertEqual(len(saved), num_shots + 3 + remaining)
 
@@ -128,7 +128,7 @@ class TestBot(unittest.TestCase):
             experiment_filename=TEST_EXPERIMENT_PTH,
             is_mock=True,
             is_initialize_experiment_file=False)
-        self.assertEqual(bot2.oneshot_idx, self.bot.data_len)
+        self.assertEqual(bot2.zeroshot_idx, self.bot.data_len)
 
     def testGetExperimentResults(self):
         if IGNORE_TEST:
@@ -156,11 +156,16 @@ class TestBot(unittest.TestCase):
         if IGNORE_TEST:
             return
         # Test with valid directory containing multiple CSV files
-        Bot.plotROCs(TEST_EXPERIMENT_MULTIPLE_DIR, is_plot=IS_PLOT)
+        dir_path = os.path.join(cn.EXPERIMENT_DIR, "batch")
+        dir_names = [TEST_EXPERIMENT_MULTIPLE_DIR, dir_path]
+        legends = ["Single 1", "Single 2", "Single 3",
+                "Batch 1", "Batch 2", "Batch 3"]
+        Bot.plotROCs(dir_names, is_plot=IS_PLOT,
+                legends=legends)
 
-    def testExecuteMultipleOneshotInFile(self):
-        if IGNORE_TEST:
-            return
+    def testExecuteBatchZeroshot(self):
+        #if IGNORE_TEST:
+        #    return
         if os.path.exists(TEST_EXPERIMENT_PTH):
             os.remove(TEST_EXPERIMENT_PTH)
         ##
@@ -172,7 +177,7 @@ class TestBot(unittest.TestCase):
                 experiment_dir=cn.TEST_DIR,
                 is_initialize_experiment_file=True,
                 is_mock=is_mock)
-            result_df = bot.executeMultipleOneshotInFile()
+            result_df = bot.executeBatchZeroshot()
             if not (len(result_df) == expected_num):
                 import pdb; pdb.set_trace()
             self.assertTrue(len(result_df) == expected_num)
@@ -184,9 +189,9 @@ class TestBot(unittest.TestCase):
         if IGNORE_TEST:
             print("small data, not mock")
         test(data_path=TEST_SMALL_DATA_PTH, is_mock=False)
-        #if IGNORE_TEST:
-        #    print("large data, not mock")
-        #test(data_path=cn.MERGED_DATA_PTH, is_mock=False)
+        if IGNORE_TEST:
+            print("large data, not mock")
+        test(data_path=cn.MERGED_DATA_PTH, is_mock=False)
 
     def test_ExecuteGenerateContent(self):
         if IGNORE_TEST:
@@ -204,7 +209,8 @@ class TestBot(unittest.TestCase):
                 is_initialize_experiment_file=True,
                 is_mock=is_mock
                 )
-            response_text, response = bot._executeGenerateContent(dataframe=input_df)
+            prompt = bot._getPrompt(prompt_file="prompt1.py", directory="zeroshot_batch")
+            response_text, response = bot._executeGenerateContent(prompt, dataframe=input_df)
             # Verify response_text is a string
             self.assertIsInstance(response_text, str)
             # Verify response_text is not empty
