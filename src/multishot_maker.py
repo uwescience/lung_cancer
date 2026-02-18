@@ -14,43 +14,54 @@ COL_OS = "OS"
 class MultishotMaker(object):
     '''Selects example patients and builds few-shot prompts.'''
 
-    def __init__(self, data_df: pd.DataFrame) -> None:
+    def __init__(self, data_df: pd.DataFrame, num_examples: int = 4) -> None:
         """
         Args:
             data_df (pd.DataFrame): DataFrame of patients.
+            num_examples (int): Number of example patients to select.
+                Must be a multiple of 4 (one survivor and one non-survivor
+                per cancer type per round).
         """
+        if num_examples < 4 or num_examples % 4 != 0:
+            raise ValueError(
+                f"num_examples must be a positive multiple of 4, got {num_examples}")
         self.data_df = data_df
-        self.examples = self._chooseExamples()
+        self.num_examples = num_examples
+        self.example_df = self._chooseExamples()
 
     def _chooseExamples(self) -> pd.DataFrame:
-        """Chooses 4 example patients: one survivor and one non-survivor
-        for each of adenocarcinoma and squamous cell cancer.
+        """Chooses example patients: equal numbers of survivors and
+        non-survivors for each of adenocarcinoma and squamous cell cancer.
 
         Returns:
-            pd.DataFrame: 4 rows with columns from the original dataset.
+            pd.DataFrame: num_examples rows with columns from the original dataset.
         """
+        per_group = self.num_examples // 4
         selections = []
         for disease_type in [DISEASE_ADENOCARCINOMA, DISEASE_SQUAMOUS]:
             disease_df = self.data_df[self.data_df[COL_DISEASE_TYPE] == disease_type]
             for outcome in [1, 0]:
-                candidates = disease_df[disease_df[COL_OS] == outcome]
-                if len(candidates) == 0:
+                candidate_df = disease_df[disease_df[COL_OS] == outcome]
+                if len(candidate_df) < per_group:
                     raise ValueError(
-                        f"No patients found for {disease_type} with OS={outcome}")
-                row = candidates.sample(n=1, random_state=None)
-                selections.append(row)
-        return pd.concat(selections, ignore_index=True)
+                        f"Need {per_group} patients for {disease_type} with "
+                        f"OS={outcome}, but only {len(candidate_df)} available")
+                row_df = candidate_df.sample(n=per_group, random_state=None)
+                selections.append(row_df)
+        result_df = pd.concat(selections)
+        self._example_indices = result_df.index
+        return result_df.reset_index(drop=True)
 
-    def buildPrompt(self) -> str:
-        """Builds a few-shot prompt using the 4 example patients.
+    def buildPrompt(self) -> tuple[str, pd.DataFrame]:
+        """Builds a few-shot prompt using the example patients.
         The prompt uses only the pathology report as the example data.
 
         Returns:
-            str: Prompt with examples and a %%s placeholder for the target patient data.
+            tuple: (prompt string with %%s placeholder, DataFrame of remaining patients)
         """
         outcome_labels = {1: "survive", 0: "not_survive"}
         examples_text = ""
-        for idx, row in self.examples.iterrows():
+        for idx, row in self.example_df.iterrows():
             idx = int(idx)  # type: ignore
             label = outcome_labels[row[COL_OS]]
             report = row[cn.COL_PATHOLOGY_REPORT].replace("%", "%%")
@@ -75,4 +86,5 @@ class MultishotMaker(object):
             "Return only a single number between 0 and 1 representing the "
             "probability of surviving beyond 2 years.\n"
         )
-        return prompt
+        remaining_df = self.data_df.drop(self._example_indices)
+        return prompt, remaining_df

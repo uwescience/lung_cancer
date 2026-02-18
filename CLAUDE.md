@@ -84,3 +84,4 @@ Use `Bot.getExperimentResults(result_dir_name)` to load a directory of CSVs into
 - Lists end in "s" (`selected_columns`, `result_dcts`); integer counts do not
 - `IGNORE_TEST = False` at top of `test_bot.py` controls test skipping globally
 - `IS_PLOT = False` in tests suppresses matplotlib display during test runs
+- DataFrames end in "_df". Global names of dataframes (in capitals) end in "_DF"
