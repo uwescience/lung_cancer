@@ -13,6 +13,7 @@ import time
 import src.constants as cn
 
 from google import genai # type: ignore
+from google.genai import types # type: ignore
 import os
 import matplotlib.pyplot as plt  # type: ignore
 import numpy as np  # type: ignore
@@ -72,17 +73,25 @@ class Bot(object):
         self.path = diagnostic_pth
         self.model = model
         self.full_data_df= pd.read_csv(diagnostic_pth)
+        self.full_data_df[cn.COL_UNIQUE_ID] = range(len(self.full_data_df))
         self.data_len = len(self.full_data_df.index)
         self.columns = self.full_data_df.columns.tolist()
         if not set(selected_columns).issubset(set(self.columns)):
             raise ValueError(f"Selected columns not in {diagnostic_pth}")
-        self.selected_columns = selected_columns
-        self.selected_data_df = self.full_data_df[selected_columns]
+        self.selected_columns = list(selected_columns)
+        self.selected_columns.remove(cn.COL_SUBMITTER_ID) if cn.COL_SUBMITTER_ID in self.selected_columns else None
+        self.selected_columns.append(cn.COL_UNIQUE_ID)
+        self.selected_data_df = self.full_data_df[self.selected_columns]
         if self.is_randomized:
             for column in self.selected_columns:
                 self.selected_data_df[column] = np.random.permutation(self.selected_data_df[column])
         self._initializeEnvironment()
         self.client = genai.Client()
+        self.generation_config = types.GenerateContentConfig(
+            temperature=0.0,
+            top_p=1.0,
+            top_k=1,
+        )
         self.uploaded_file_dct: dict = {}
 
     def getExperimentFilename(self)->str:
@@ -99,7 +108,7 @@ class Bot(object):
 
     def makeChat(self):
         '''Make a chat object.'''
-        chat = self.client.chats.create(model=self.model)
+        chat = self.client.chats.create(model=self.model, config=self.generation_config)
         return chat
     
     def executeSingleZeroshot(self, data_idx:int=0, prompt_file:str="prompt1.py")->dict:
@@ -347,21 +356,22 @@ class Bot(object):
         if not self.is_mock:
             response = self.client.models.generate_content(
                     model=self.model,
-                    contents=[prompt, uploaded_file])
+                    contents=[prompt, uploaded_file],
+                    config=self.generation_config)
             response_text = response.text
             # Clean the response text
         else:
-            submitter_ids = self.full_data_df[cn.COL_SUBMITTER_ID].tolist()
+            unique_ids = self.full_data_df[cn.COL_UNIQUE_ID].tolist()
             with open(LOCAL_CONTEXT_FILE, "r") as f:
                 file_content = f.readlines()
             length = len(file_content) - 1 # exclude header
             response_text = "\n".join(
-                    [f"{submitter_ids[n]},{str(np.random.uniform(0, 1))}"
+                    [f"{unique_ids[n]},{str(np.random.uniform(0, 1))}"
                     for n in range(length)])
         # Add the header if missing
         response_text = str(response_text).strip()
-        if not cn.COL_SUBMITTER_ID in response_text:
-            response_text = f"{cn.COL_SUBMITTER_ID},{cn.COL_PREDICTED}\n" + response_text
+        if not cn.COL_UNIQUE_ID in response_text:
+            response_text = f"{cn.COL_UNIQUE_ID},{cn.COL_PREDICTED}\n" + response_text
         #
         return response_text, response  # type: ignore
     
@@ -393,7 +403,7 @@ class Bot(object):
         '''
         MAX_RETRIES = 10 
         all_response_df = pd.DataFrame()
-        unprocessed_patients = self.selected_data_df[cn.COL_SUBMITTER_ID].tolist()
+        unprocessed_patients = self.selected_data_df[cn.COL_UNIQUE_ID].tolist()
         prev_patient_count = len(unprocessed_patients)
         # Process until all patients are done
         result_df = pd.DataFrame()
@@ -401,7 +411,7 @@ class Bot(object):
             if len(unprocessed_patients) == 0:
                 break
             df = self.selected_data_df[
-                self.selected_data_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
+                self.selected_data_df[cn.COL_UNIQUE_ID].isin(unprocessed_patients)]
             prompt = self._getPrompt(prompt_file=prompt_file)
             response_text, _ = self._executeGenerateContent(prompt=prompt, dataframe=df)
             # Create the response dataframe
@@ -411,23 +421,23 @@ class Bot(object):
                 print(f"Quitting because error reading response text: {e}")
                 break
             response_df = response_df[
-                    response_df[cn.COL_SUBMITTER_ID].isin(unprocessed_patients)]
+                    response_df[cn.COL_UNIQUE_ID].isin(unprocessed_patients)]
             columns = response_df.columns.tolist()
             columns[1] = cn.COL_PREDICTED
             response_df.columns = columns
             # Eliminate redunant responses
-            response_df = response_df.groupby(cn.COL_SUBMITTER_ID).mean().reset_index()
+            response_df = response_df.groupby(cn.COL_UNIQUE_ID).mean().reset_index()
             # Eliminate processed patients
             unprocessed_patients = [p for p in unprocessed_patients
-                if p not in response_df[cn.COL_SUBMITTER_ID].tolist()]
+                if p not in response_df[cn.COL_UNIQUE_ID].tolist()]
             all_response_df = pd.concat([all_response_df, response_df], ignore_index=True)
             # Check for progress
             if len(unprocessed_patients) == prev_patient_count:
                 raise RuntimeError("No progress made in processing patients")
             prev_patient_count = len(unprocessed_patients)
             result_df = pd.merge(all_response_df, 
-                                self.full_data_df[[cn.COL_SUBMITTER_ID, 'OS']], 
-                                on=cn.COL_SUBMITTER_ID,
+                                self.full_data_df[[cn.COL_UNIQUE_ID, 'OS']],
+                                on=cn.COL_UNIQUE_ID,
                                 how='left')
             result_df.rename(columns={'OS': cn.COL_ACTUAL}, inplace=True)
             result_df.to_csv(self.experiment_pth, index=False)

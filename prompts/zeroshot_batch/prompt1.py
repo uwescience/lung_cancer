@@ -13,11 +13,13 @@ def getPrompt(file_path:str=LOCAL_CONTEXT_FILE)->str:
     So, you are processing a batch of requests. Provide a response for each row in the file.
     Do not skip any rows.
     The columns are as follows:
-    *cases.submitter_id: Unique patient identifier
+    *unique_id: Unique patient identifier
     *pathology_report: Text of the pathology report
 
     Output format (no explanation):
-    indicate the probability of a 2 year survival.
-    Only return a probability value between 0 and 1
+    Return CSV with columns: unique_id,predicted
+    where unique_id matches the patient's unique_id from the input file
+    and predicted is the probability of a 2 year survival (between 0 and 1).
+    Do not include a header row.
     """
     return prompt

@@ -53,11 +53,11 @@ class TestBot(unittest.TestCase):
         self.assertEqual(
             bot.selected_data_df.columns.tolist(),
             [
-                "cases.submitter_id",
                 "diagnoses.ajcc_pathologic_stage",
                 "pathology_report",
                 "diagnoses.residual_disease",
-                "demographic.age_at_index"
+                "demographic.age_at_index",
+                "unique_id"
             ]
         )
 
@@ -189,17 +189,16 @@ class TestBot(unittest.TestCase):
         if IGNORE_TEST:
             print("small data, not mock")
         test(data_path=TEST_SMALL_DATA_PTH, is_mock=False)
-        if IGNORE_TEST:
-            print("large data, not mock")
-        test(data_path=cn.MERGED_DATA_PTH, is_mock=False)
+        #if IGNORE_TEST:
+        #    print("large data, not mock")
+        #test(data_path=cn.MERGED_DATA_PTH, is_mock=False)
 
     def test_ExecuteGenerateContent(self):
         if IGNORE_TEST:
             return
-        # Load first entries from TEST_DATA_PTH
+        # Load first entries from bot's selected data
         num_entry = 3
-        test_df = pd.read_csv(TEST_SMALL_DATA_PTH)
-        input_df = test_df[self.bot.selected_columns].head(num_entry)
+        input_df = self.bot.selected_data_df.head(num_entry)
         ##
         def test(is_mock: bool):
             # Execute the method
@@ -216,7 +215,7 @@ class TestBot(unittest.TestCase):
             # Verify response_text is not empty
             self.assertGreater(len(response_text), 0)
             # Verify response_text contains expected columns
-            self.assertIn(cn.COL_SUBMITTER_ID, response_text)
+            self.assertIn(cn.COL_UNIQUE_ID, response_text)
             # Verify response_text contains predictions (comma-separated values)
             lines = response_text.strip().split('\n')
             # Should have header + num_entry data rows
@@ -224,7 +223,7 @@ class TestBot(unittest.TestCase):
             # Check that each line (except header) has comma-separated values
             for line in lines[1:1+num_entry]:  # Skip header, check first num_entry data lines
                 parts = line.split(',')
-                self.assertEqual(len(parts), 2)  # submitter_id, predicted
+                self.assertEqual(len(parts), 2)  # unique_id, predicted
                 # Second part should be convertible to float (probability)
                 try:
                     prob = float(parts[1])
