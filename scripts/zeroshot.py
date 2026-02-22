@@ -30,7 +30,7 @@ def zeroshotBatch():
     print(f"Executing zero-shot predictions sequentially, saving results to {EXPERIMENT_PATH}...")
     bot = Bot(
         experiment_filename=EXPERIMENT_PATH)
-    result_df = bot.executeBatchZeroshot(prompt_file="prompt1.py")
+    result_df = bot.executeBatch(prompt_file="prompt1.py")
     print(f"Completed {len(result_df)} zero-shot predictions.")
     print(f"Results saved to {EXPERIMENT_PATH}.")
         

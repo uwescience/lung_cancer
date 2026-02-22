@@ -11,6 +11,7 @@ from http import client
 import os
 import time
 import src.constants as cn
+from src.multishot_maker import MultishotMaker
 
 from google import genai # type: ignore
 from google.genai import types # type: ignore
@@ -25,6 +26,7 @@ from sklearn.metrics import RocCurveDisplay  # type: ignore
 from io import StringIO
 
 LOCAL_CONTEXT_FILE = os.path.join(cn.DATA_DIR, "local_context.csv")
+BATCH_DIR = "batch"
 
 
 class Bot(object):
@@ -206,7 +208,6 @@ class Bot(object):
         )
         plt.show()
 
-    #def plotROCs(cls, directory_path: str, figsize=(8,6)) -> None:
     @classmethod
     def plotROCs(cls,
             result_dir_names: List[str],
@@ -361,7 +362,7 @@ class Bot(object):
             response_text = response.text
             # Clean the response text
         else:
-            unique_ids = self.full_data_df[cn.COL_UNIQUE_ID].tolist()
+            unique_ids = dataframe[cn.COL_UNIQUE_ID].tolist()
             with open(LOCAL_CONTEXT_FILE, "r") as f:
                 file_content = f.readlines()
             length = len(file_content) - 1 # exclude header
@@ -375,7 +376,7 @@ class Bot(object):
         #
         return response_text, response  # type: ignore
     
-    def _getPrompt(self, prompt_file:str="prompt1.py", directory:str="zeroshot_batch")->str:
+    def _getPrompt(self, prompt_file:str="prompt1.py", directory:str="batch")->str:
         """Gets the batch prompt from the specified file.
 
         Args:
@@ -389,11 +390,13 @@ class Bot(object):
         prompt = prompt_module.getPrompt()
         return prompt
 
-    def executeBatchZeroshot(self, prompt_file:str="prompt1.py")->pd.DataFrame:
-        '''Uploads the data for multiple zero-shot analyses in batches. Then submits the prompt.
+    def executeBatchMultishot(self, prompt_file:str="prompt1.py",
+            num_example:int=0)->pd.DataFrame:
+        '''Uploads the data for multiple multi-shot analyses in batches. Then submits the prompt.
 
         Args:
-            prompt_file (str):  Name of file in the prompt/zeroshot_batch directory containing the prompt to use for the batch zero-shot analysis.
+            prompt_file (str):  Name of file in the prompt/batch directory containing the prompt to use for the batch zero-shot analysis.
+            num_example (int): Number of examples to include in the prompt. If 0, includes all examples.
 
         Returns:
             pd.DataFrame:
@@ -401,10 +404,18 @@ class Bot(object):
                 predicted: returned from LLM (float)
                 actual: true label (float)
         '''
+        # Initializaitons
         MAX_RETRIES = 10 
         all_response_df = pd.DataFrame()
         unprocessed_patients = self.selected_data_df[cn.COL_UNIQUE_ID].tolist()
         prev_patient_count = len(unprocessed_patients)
+        # Construct the examples
+        if num_example == 0:
+            example_str = ""
+        else:
+            multishot_maker = MultishotMaker(self.full_data_df, num_example=num_example)
+            example_str, example_case_ids = multishot_maker.buildExamples()
+            unprocessed_patients = [p for p in unprocessed_patients if p not in example_case_ids]
         # Process until all patients are done
         result_df = pd.DataFrame()
         for _ in range(MAX_RETRIES):
@@ -412,7 +423,9 @@ class Bot(object):
                 break
             df = self.selected_data_df[
                 self.selected_data_df[cn.COL_UNIQUE_ID].isin(unprocessed_patients)]
-            prompt = self._getPrompt(prompt_file=prompt_file)
+            prompt = self._getPrompt(prompt_file=prompt_file, directory=BATCH_DIR)
+            # TO DO: Add the examples to the prompt in a more principled way
+            prompt = prompt + "\n" + example_str
             response_text, _ = self._executeGenerateContent(prompt=prompt, dataframe=df)
             # Create the response dataframe
             try:
@@ -422,6 +435,7 @@ class Bot(object):
                 break
             response_df = response_df[
                     response_df[cn.COL_UNIQUE_ID].isin(unprocessed_patients)]
+            response_df = response_df.rename(columns={response_df.columns[1]: cn.COL_PREDICTED}) # type: ignore
             columns = response_df.columns.tolist()
             columns[1] = cn.COL_PREDICTED
             response_df.columns = columns

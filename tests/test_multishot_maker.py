@@ -12,13 +12,15 @@ import unittest
 IGNORE_TEST = False
 TEST_DATA_PTH = os.path.join(cn.TEST_DIR, "test_data.csv")
 TEST_DATA_DF = pd.read_csv(TEST_DATA_PTH)
+TEST_DATA_DF[cn.COL_UNIQUE_ID] = range(len(TEST_DATA_DF.index))
+LEN_TEST_DATA = len(TEST_DATA_DF)
 
 
 class TestMultishotMaker(unittest.TestCase):
 
     def setUp(self):
         self.num_examples = 8
-        self.maker = MultishotMaker(TEST_DATA_DF, num_examples=self.num_examples)
+        self.maker = MultishotMaker(TEST_DATA_DF, num_example=self.num_examples)
 
     def testConstructor(self):
         if IGNORE_TEST:
@@ -51,7 +53,7 @@ class TestMultishotMaker(unittest.TestCase):
         # Each example should have a pathology report
         for idx in range(self.num_examples):
             self.assertIsInstance(examples_df.loc[idx, cn.COL_PATHOLOGY_REPORT], str)
-            self.assertGreater(len(examples_df.loc[idx, cn.COL_PATHOLOGY_REPORT]), 0)
+            self.assertGreater(len(examples_df.loc[idx, cn.COL_PATHOLOGY_REPORT]), 0)   # type: ignore
 
     def testChooseExamplesRandomness(self):
         """Two MultishotMaker instances should (usually) pick different patients."""
@@ -76,15 +78,15 @@ class TestMultishotMaker(unittest.TestCase):
         if IGNORE_TEST:
             return
         # Create a dataframe with only adenocarcinoma patients
-        adeno_df = self.maker.data_df[
-            self.maker.data_df[COL_DISEASE_TYPE] == DISEASE_ADENOCARCINOMA].copy()
+        adeno_df = pd.DataFrame(self.maker.data_df[
+            self.maker.data_df[COL_DISEASE_TYPE] == DISEASE_ADENOCARCINOMA].copy())
         with self.assertRaises(ValueError):
             MultishotMaker(adeno_df)
 
-    def testBuildPrompt(self):
+    def testBuildExamples(self):
         if IGNORE_TEST:
             return
-        prompt, remaining_df = self.maker.buildPrompt()
+        prompt, unique_ids = self.maker.buildExamples()
         self.assertIsInstance(prompt, str)
         # Should contain the instruction section
         self.assertIn("clinical oncologist", prompt)
@@ -100,17 +102,15 @@ class TestMultishotMaker(unittest.TestCase):
         for idx in range(self.num_examples):
             report = self.maker.example_df.loc[idx, cn.COL_PATHOLOGY_REPORT]
             # Check that at least the first 50 chars of each report appear
-            self.assertIn(report[:50], prompt)
+            self.assertIn(report[:50], prompt)  # type: ignore
         # Remaining DataFrame should exclude the examples
-        self.assertIsInstance(remaining_df, pd.DataFrame)
-        self.assertEqual(
-            len(remaining_df), len(TEST_DATA_DF) - self.num_examples)
+        self.assertEqual(len(unique_ids), self.num_examples)
 
     def testBuildPromptPlaceholder(self):
         """The prompt should be usable with string formatting."""
         if IGNORE_TEST:
             return
-        prompt, _ = self.maker.buildPrompt()
+        prompt, _ = self.maker.buildExamples()
         patient_data = "pathology_report: Sample pathology text here."
         formatted = prompt % patient_data
         self.assertIn(patient_data, formatted)

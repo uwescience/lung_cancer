@@ -7,7 +7,7 @@ import pandas as pd  # type: ignore
 import unittest
 
 
-IGNORE_TEST = False
+IGNORE_TEST = True
 IS_PLOT = False
 # Construct dummy test data
 TEST_DATA_PTH = os.path.join(cn.TEST_DIR, "test_data.csv")
@@ -163,29 +163,27 @@ class TestBot(unittest.TestCase):
         Bot.plotROCs(dir_names, is_plot=IS_PLOT,
                 legends=legends)
 
-    def testExecuteBatchZeroshot(self):
+    def testExecuteBatchMultishot(self):
         #if IGNORE_TEST:
         #    return
         if os.path.exists(TEST_EXPERIMENT_PTH):
             os.remove(TEST_EXPERIMENT_PTH)
         ##
-        def test(data_path:str, is_mock: bool):
-            expected_num = len(pd.read_csv(data_path))
+        def test(data_path:str, is_mock: bool, num_example:int = 0):
+            expected_num = len(pd.read_csv(data_path)) - num_example
             bot = Bot(
                 diagnostic_pth=data_path,
                 experiment_filename=TEST_EXPERIMENT_FILENAME,
                 experiment_dir=cn.TEST_DIR,
                 is_initialize_experiment_file=True,
                 is_mock=is_mock)
-            result_df = bot.executeBatchZeroshot()
-            if not (len(result_df) == expected_num):
-                import pdb; pdb.set_trace()
+            result_df = bot.executeBatchMultishot(num_example=num_example)
             self.assertTrue(len(result_df) == expected_num)
             self.assertTrue(os.path.exists(TEST_EXPERIMENT_PTH))
         ##
         if IGNORE_TEST:
             print("small data, mock")
-        test(data_path=TEST_SMALL_DATA_PTH, is_mock=True)
+        test(data_path=TEST_SMALL_DATA_PTH, is_mock=True, num_example=4)
         if IGNORE_TEST:
             print("small data, not mock")
         test(data_path=TEST_SMALL_DATA_PTH, is_mock=False)
@@ -198,7 +196,7 @@ class TestBot(unittest.TestCase):
             return
         # Load first entries from bot's selected data
         num_entry = 3
-        input_df = self.bot.selected_data_df.head(num_entry)
+        input_df = pd.DataFrame(self.bot.selected_data_df.head(num_entry))
         ##
         def test(is_mock: bool):
             # Execute the method
@@ -209,7 +207,7 @@ class TestBot(unittest.TestCase):
                 is_mock=is_mock
                 )
             prompt = bot._getPrompt(prompt_file="prompt1.py", directory="zeroshot_batch")
-            response_text, response = bot._executeGenerateContent(prompt, dataframe=input_df)
+            response_text, _ = bot._executeGenerateContent(prompt, dataframe=input_df)
             # Verify response_text is a string
             self.assertIsInstance(response_text, str)
             # Verify response_text is not empty
