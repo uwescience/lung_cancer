@@ -1,4 +1,4 @@
-'''Does Zeroshot prediction using Gemini API.'''
+'''Runs experiments using Gemini API.'''
 
 """
 Notes
@@ -11,7 +11,7 @@ import os
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
-EXPERIMENT_PATH = os.path.join(cn.EXPERIMENT_DIR, "zeroshot_experiment_test_results.csv")
+EXPERIMENT_PATH = os.path.join(cn.EXPERIMENT_DIR, "4shot_experiment_test_results.csv")
 REPORT_INTERVAL = 5
 
 
@@ -26,14 +26,14 @@ def zeroshotSingle():
         print(f"Completed {(count + 1) * batch_size} out of {batch_size * num_batch} zero-shot predictions.")
     print(f"Results saved to {EXPERIMENT_PATH}.")
 
-def zeroshotBatch():
+def executeBatchMultishot(num_example: int=0):
     print(f"Executing zero-shot predictions sequentially, saving results to {EXPERIMENT_PATH}...")
     bot = Bot(
         experiment_filename=EXPERIMENT_PATH)
-    result_df = bot.executeBatch(prompt_file="prompt1.py")
+    result_df = bot.executeBatchMultishot(prompt_file="prompt1.py", num_example=num_example)
     print(f"Completed {len(result_df)} zero-shot predictions.")
     print(f"Results saved to {EXPERIMENT_PATH}.")
         
 
 if __name__ == '__main__':
-    zeroshotBatch()
+    executeBatchMultishot(num_example=4)
