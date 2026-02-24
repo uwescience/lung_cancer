@@ -4,84 +4,80 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A lung cancer survival prediction project using the Google Gemini API to analyze pathology reports and clinical data (LUAD dataset) to predict 2-year survival outcomes via zero-shot prompting.
+This is an LLM-based clinical prediction system that uses Google's Gemini API to predict 2-year lung cancer survival outcomes from TCGA pathology reports (657 patients, LUAD cohort). The system supports zero-shot and few-shot prediction modes, both single-patient and batch.
 
 ## Environment Setup
 
 ```bash
-source activate.sh  # Activates virtualenv (lun/) and sets PYTHONPATH to include src/
+source activate.sh   # activates venv (lun/) and sets PYTHONPATH to include src/
 ```
 
-`activate.sh` adds `src/` to `PYTHONPATH`, which is required for `import src.constants as cn` to work. **All scripts must be run from the project root.**
-
-`src/constants.py` uses `os.getcwd()` to compute paths, so running from the wrong directory will break all file paths.
+The Google Gemini API key is read at runtime from `/Users/jlheller/google_api_key_paid.txt`.
 
 ## Running Experiments
 
 ```bash
-python ./scripts/zeroshot.py       # Runs executeBatchZeroshot() by default
+python scripts/run_experiments.py
 ```
 
-To run single-patient sequential predictions instead, call `zeroshotSingle()` from within the script (swap the `if __name__ == '__main__'` call).
+Edit `scripts/run_experiments.py` before each run:
+- Set `EXPERIMENT_PATH` to a new output file to avoid overwriting previous results
+- Call `executeBatchMultishot(num_example=0)` for zero-shot, or `num_example=4` (or multiples of 4) for few-shot
+- Call `zeroshotSingle()` for iterative single-patient mode
 
 ## Running Tests
 
 ```bash
-python ./tests/test_bot.py         # Runs all unittest tests
+python -m unittest tests.test_bot
+python -m unittest tests.test_multishot_maker
+# or
+nose2
 ```
 
-Set `IGNORE_TEST = True` in `test_bot.py` to skip slow/API-dependent tests. Use `is_mock=True` in `Bot()` to test without API calls.
+Tests use `is_mock=True` on `Bot` to avoid real API calls.
 
 ## Architecture
 
-### Core: `src/bot.py` — `Bot` class
+### Data Flow
 
-The central orchestrator. Key constructor parameters:
-- `diagnostic_pth`: CSV data file (default: `data/merged_data/processed_dataset.csv`)
-- `selected_columns`: columns fed to the prompt (default: `["cases.submitter_id", "pathology_report"]`)
-- `experiment_filename`: output CSV name; auto-resumes from existing file by checking its length to set `zeroshot_idx`
-- `is_initialize_experiment_file`: if `True`, deletes existing experiment file before starting
-- `is_mock`: returns `np.random.uniform(0,1)` instead of making API calls (for testing)
-- `is_randomized`: randomly permutes each selected column (used in tests to prevent data leakage)
+```
+data/merged_data/processed_dataset.csv (657 patients)
+  → Bot.__init__: assigns unique_id, selects columns
+  → executeBatchMultishot / executeMultipleSingleZeroshot
+  → (optional) MultishotMaker.buildExamples(): few-shot examples
+  → prompts/{batch,zeroshot_single}/prompt1.py: prompt template
+  → Gemini API (file upload for batch, chat for single)
+  → CSV response parsed → merged with OS labels
+  → experiments/<filename>.csv
+```
 
-Two prediction modes:
-- **Single** (`executeSingleZeroshot` / `executeMultipleSingleZeroshot`): one API chat per patient, sequential, appends to CSV
-- **Batch** (`executeBatchZeroshot`): uploads all patient data as a CSV file to Gemini, retries up to 10 times for unprocessed patients, uses `_executeGenerateContent` which writes to `data/local_context.csv` then uploads
+### Key Components
 
-### Prompts: `prompts/`
+**`src/bot.py` — `Bot` class**
+- `executeBatchMultishot(num_example)`: uploads patient data as a file to Gemini, processes unresponded patients in retry loops (up to 10 retries). Saves incrementally to experiment CSV.
+- `executeMultipleSingleZeroshot(num_shot)`: iterates patients one at a time, new chat session per patient.
+- `_executeGenerateContent()`: handles file upload, polling for processing, and response retrieval.
+- `plotROC()` / `plotROCs()` / `plotPredictionRange()`: analysis helpers that read from experiment directories.
+- `is_mock=True`: returns random predictions without API calls (for testing).
+- Generation config: `temperature=0.0, top_p=1.0, top_k=1` (intended to be deterministic, but non-determinism has been observed in practice).
 
-Organized into subdirectories by mode:
-- `prompts/zeroshot_single/` — single-patient prompts (string with `%s` placeholder for patient data)
-- `prompts/zeroshot_batch/` — batch prompts (references the uploaded file)
+**`src/multishot_maker.py` — `MultishotMaker` class**
+- `num_example` must be a positive multiple of 4: selects equal counts of survivors/non-survivors for each of Adenocarcinoma and Squamous Cell disease types.
+- `buildExamples()` returns the example prompt string and the list of `unique_id`s used (so they are excluded from the prediction set).
 
-Each prompt file is a Python module with a `getPrompt()` function. Loaded dynamically via `__import__` in `Bot._getPrompt(directory, prompt_file)`.
+**`src/constants.py`**
+- All path constants (`PROJECT_DIR`, `DATA_DIR`, `EXPERIMENT_DIR`, etc.) and column name constants (`COL_PREDICTED`, `COL_ACTUAL`, `COL_UNIQUE_ID`, etc.) live here.
 
-### Paths & Constants: `src/constants.py`
+**`prompts/`**
+- Each prompt file is a Python module with a `getPrompt()` function returning a string.
+- `prompts/zeroshot_single/`: prompt string contains `%s` placeholder substituted with patient column data.
+- `prompts/batch/`: prompt string for batch file-upload mode; few-shot examples are appended after.
 
-All file paths centralized here. Update `MERGED_DATA_PTH` or `EXPERIMENT_DIR` here when changing data locations.
+### Experiment Output Format
 
-### Data
+Results CSVs contain: `unique_id`, `predicted` (float 0–1), `actual` (0/1 OS label).
+Experiments are organized under `experiments/0shot/`, `experiments/4shot/`, `experiments/8shot/` for ROC comparison via `Bot.plotROCs()`.
 
-- `data/merged_data/processed_dataset.csv`: main dataset; key columns are `cases.submitter_id`, `pathology_report`, `OS` (binary label: 1=survived 2+ years, 0=died)
-- `data/local_context.csv`: temporary file written during batch processing; not committed
+### Known Issue
 
-### Experiments: `experiments/`
-
-Results organized in subdirectories (e.g., `experiments/simple/`, `experiments/batch/`). Each CSV has: `cases.submitter_id`, selected columns, `predicted` (float 0–1), `actual` (OS label).
-
-Use `Bot.getExperimentResults(result_dir_name)` to load a directory of CSVs into `Dict[str, pd.DataFrame]`. Use `Bot.plotROCs(result_dir_names)` to overlay ROC curves; it also computes a "Median Prediction" across runs.
-
-### Gemini API
-
-- API key read from file (default: `/Users/jlheller/google_api_key_paid.txt`), stored to `GEMINI_API_KEY` env var
-- Model default: `gemini-2.5-flash`
-- Single mode: `client.chats.create()` + `chat.send_message(prompt)`
-- Batch mode: `client.files.upload()` + `client.models.generate_content(model, contents=[prompt, file])`
-
-## Conventions
-
-- Method names are camelCase (`executeSingleZeroshot`, `plotROCs`)
-- Lists end in "s" (`selected_columns`, `result_dcts`); integer counts do not
-- `IGNORE_TEST = False` at top of `test_bot.py` controls test skipping globally
-- `IS_PLOT = False` in tests suppresses matplotlib display during test runs
-- DataFrames end in "_df". Global names of dataframes (in capitals) end in "_DF"
+Non-deterministic outputs occur even with `temperature=0.0` — likely API-side randomness. Results differ between equivalent `(batch_size=1, num_batch=7)` vs `(batch_size=7, num_batch=1)` configurations.
