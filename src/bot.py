@@ -232,11 +232,11 @@ class Bot(object):
         keys = list(all_result_dct.keys())
         # Construct the median value
         all_df = pd.concat([all_result_dct[f] for f in all_result_dct], ignore_index=True)
-        dfg = all_df.groupby(cn.COL_SUBMITTER_ID)
+        dfg = all_df.groupby(cn.COL_UNIQUE_ID)
         medians = dfg[cn.COL_PREDICTED].median().tolist()
         median_df = pd.DataFrame(medians, columns=[cn.COL_PREDICTED])
-        median_df[cn.COL_SUBMITTER_ID] = dfg[cn.COL_SUBMITTER_ID].first().tolist()
-        median_df.set_index(cn.COL_SUBMITTER_ID, inplace=True)
+        median_df[cn.COL_UNIQUE_ID] = dfg[cn.COL_UNIQUE_ID].first().tolist()
+        median_df.set_index(cn.COL_UNIQUE_ID, inplace=True)
         median_df[cn.COL_ACTUAL] = dfg[cn.COL_ACTUAL].first().tolist()
         all_result_dct["Median Prediction"] = median_df
         # Plot ROC curve for each file
@@ -316,12 +316,9 @@ class Bot(object):
         result_dct = cls.getExperimentResults(result_dir_name,
             experiment_dir_pth=experiment_dir_pth)
         df = pd.concat([result_dct[f] for f in result_dct], ignore_index=True)
-        stds = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].std().tolist()
-        maxs = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].max().tolist()
-        mins = df.groupby(cn.COL_SUBMITTER_ID)[cn.COL_PREDICTED].min().tolist()
+        maxs = df.groupby(cn.COL_UNIQUE_ID)[cn.COL_PREDICTED].max().tolist()
+        mins = df.groupby(cn.COL_UNIQUE_ID)[cn.COL_PREDICTED].min().tolist()
         ranges = [maxs[i] - mins[i] for i in range(len(maxs))]
-        #plt.hist(stds, bins=30, alpha=0.7, density=True)
-        #plt.hist(ranges, bins=30, alpha=0.7, culmulative=True, density=True)
         ranges.sort()
         x_arr = np.array(ranges)
         y_arr = np.array(range(len(ranges))) / len(ranges)

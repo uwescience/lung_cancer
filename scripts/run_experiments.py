@@ -11,7 +11,7 @@ import os
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
-EXPERIMENT_PATH = os.path.join(cn.EXPERIMENT_DIR, "4shot_experiment_test_results.csv")
+EXPERIMENT_PATH = os.path.join(cn.EXPERIMENT_DIR, "0shot_experiment_test_result3s.csv")
 REPORT_INTERVAL = 5
 
 
@@ -27,7 +27,7 @@ def zeroshotSingle():
     print(f"Results saved to {EXPERIMENT_PATH}.")
 
 def executeBatchMultishot(num_example: int=0):
-    print(f"Executing zero-shot predictions sequentially, saving results to {EXPERIMENT_PATH}...")
+    print(f"Executing predictions in batch with {num_example} examples. Saving results to {EXPERIMENT_PATH}...")
     bot = Bot(
         experiment_filename=EXPERIMENT_PATH)
     result_df = bot.executeBatchMultishot(prompt_file="prompt1.py", num_example=num_example)
@@ -36,4 +36,4 @@ def executeBatchMultishot(num_example: int=0):
         
 
 if __name__ == '__main__':
-    executeBatchMultishot(num_example=4)
+    executeBatchMultishot(num_example=0)

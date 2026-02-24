@@ -7,7 +7,7 @@ import pandas as pd  # type: ignore
 import unittest
 
 
-IGNORE_TEST = True
+IGNORE_TEST = False
 IS_PLOT = False
 # Construct dummy test data
 TEST_DATA_PTH = os.path.join(cn.TEST_DIR, "test_data.csv")
@@ -138,9 +138,11 @@ class TestBot(unittest.TestCase):
             experiment_dir_pth=cn.TEST_DIR
         )
         self.assertIsInstance(result_dct, dict)
-        self.assertIn("oneshot_experiment1_results.csv", result_dct)
-        df = result_dct["oneshot_experiment1_results.csv"]
+        ffile = "4shot_experiment_test_result2s.csv"
+        self.assertIn(ffile, result_dct)
+        df = result_dct[ffile]
         self.assertIsInstance(df, pd.DataFrame)
+        self.assertIn(cn.COL_UNIQUE_ID, df.columns)
         self.assertIn(cn.COL_PREDICTED, df.columns)
         self.assertIn(cn.COL_ACTUAL, df.columns)
     
@@ -164,8 +166,8 @@ class TestBot(unittest.TestCase):
                 legends=legends)
 
     def testExecuteBatchMultishot(self):
-        #if IGNORE_TEST:
-        #    return
+        if IGNORE_TEST:
+            return
         if os.path.exists(TEST_EXPERIMENT_PTH):
             os.remove(TEST_EXPERIMENT_PTH)
         ##
@@ -206,7 +208,7 @@ class TestBot(unittest.TestCase):
                 is_initialize_experiment_file=True,
                 is_mock=is_mock
                 )
-            prompt = bot._getPrompt(prompt_file="prompt1.py", directory="zeroshot_batch")
+            prompt = bot._getPrompt(prompt_file="prompt1.py", directory="batch")
             response_text, _ = bot._executeGenerateContent(prompt, dataframe=input_df)
             # Verify response_text is a string
             self.assertIsInstance(response_text, str)

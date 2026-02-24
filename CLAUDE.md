@@ -25,6 +25,12 @@ Edit `scripts/run_experiments.py` before each run:
 - Call `executeBatchMultishot(num_example=0)` for zero-shot, or `num_example=4` (or multiples of 4) for few-shot
 - Call `zeroshotSingle()` for iterative single-patient mode
 
+## Plotting results
+
+```bash
+python scripts/plot_results.py
+```
+
 ## Running Tests
 
 ```bash
@@ -50,6 +56,9 @@ data/merged_data/processed_dataset.csv (657 patients)
   → CSV response parsed → merged with OS labels
   → experiments/<filename>.csv
 ```
+
+### Implementation style
+- Imports should be at the top of the module just after the module doc string
 
 ### Key Components
 
