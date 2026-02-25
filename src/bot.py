@@ -96,6 +96,10 @@ class Bot(object):
         )
         self.uploaded_file_dct: dict = {}
 
+    def getData(self)->pd.DataFrame:
+        '''Get the selected data for the bot.'''
+        return self.selected_data_df # type: ignore
+
     def getExperimentFilename(self)->str:
         '''Get the experiment filename.
         Returns:

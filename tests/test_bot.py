@@ -61,6 +61,31 @@ class TestBot(unittest.TestCase):
             ]
         )
 
+    def test_getData_returns_selected_dataframe(self):
+        """Tests that getData() returns selected_data_df with correct columns and row count."""
+        if IGNORE_TEST:
+            return
+        result = self.bot.getData()
+        # 1. Verify getData() returns a pd.DataFrame
+        self.assertIsInstance(result, pd.DataFrame,
+            "getData() should return a pd.DataFrame")
+        # 2. Verify the DataFrame is not empty
+        self.assertFalse(result.empty,
+            "getData() should return a non-empty DataFrame")
+        # 3. Verify exact column set: cases.submitter_id stripped, unique_id appended
+        expected_columns = [cn.COL_PATHOLOGY_REPORT, cn.COL_UNIQUE_ID]
+        self.assertEqual(result.columns.tolist(), expected_columns,
+            f"getData() columns should be {expected_columns}, got {result.columns.tolist()}")
+        # 4. Verify cases.submitter_id is absent (stripped during __init__)
+        self.assertNotIn(cn.COL_SUBMITTER_ID, result.columns,
+            f"DataFrame should NOT contain column '{cn.COL_SUBMITTER_ID}'")
+        # 5. Verify row count matches full dataset length (column-select only, no row filter)
+        self.assertEqual(len(result), self.bot.data_len,
+            "getData() row count should match bot.data_len (no rows are filtered)")
+        # 6. Verify getData() returns the same object as bot.selected_data_df (no copy)
+        self.assertIs(result, self.bot.selected_data_df,
+            "getData() should return the same object reference as bot.selected_data_df")
+
     def testExecuteOneshot(self):
         if IGNORE_TEST:
             return
