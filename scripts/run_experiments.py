@@ -17,8 +17,6 @@ REPORT_INTERVAL = 5
 
 batch_size = 30
 num_batch = 25
-#batch_size = 3
-#num_batch = 2
 def zeroshotSingle():
     for count in range(num_batch):
         bot = Bot(experiment_filename=EXPERIMENT_PATH)
